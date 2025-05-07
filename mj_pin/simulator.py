@@ -246,6 +246,10 @@ class Simulator:
         while not(self.stop_sim):
             self._stop_sim(controller)
             
+            # Record video
+            if self.record_video:
+                self._record_frame(renderer, None)
+        
             start_time = time.time()
             with self.__locker:
                 # Compute state, vel
@@ -267,10 +271,6 @@ class Simulator:
                 # Apply control
                 mujoco.mj_step2(self.mj_model, self.mj_data)            
 
-            # Record video
-            if self.record_video:
-                self._record_frame(renderer, None)
-            
             # No sleep time if viewer is no viewer
             if self.use_viewer:
                 physics_time = time.time() - start_time
@@ -412,7 +412,16 @@ class Simulator:
             if self.verbose: print("\nSimulation interrupted.")
             self.stop_sim = True
 
-            if physics_thread.is_alive():
+            if physics_thread and physics_thread.is_alive():
+                physics_thread.join()
+            # Ensure threads are stopped
+            if viewer_thread and viewer_thread.is_alive():
+                viewer_thread.join()
+                
+        finally:
+            self.stop_sim = True
+            time.sleep(0.1)
+            if physics_thread and physics_thread.is_alive():
                 physics_thread.join()
             # Ensure threads are stopped
             if viewer_thread and viewer_thread.is_alive():
@@ -430,6 +439,7 @@ class Simulator:
         joint_traj: np.ndarray,
         time_traj: Optional[np.ndarray] = None,
         record_video : bool = False,
+        start_paused : bool = False,
         ) -> None:
         """
         Visualize a joint trajectory using the MuJoCo viewer.
@@ -438,8 +448,33 @@ class Simulator:
             joint_traj (np.ndarray): The joint trajectory to visualize. Shape: (N, nq).
             time_traj (np.ndarray): The corresponding time trajectory. Shape: (N,).
             record_video (bool): Record video of the trajectory
+            start_paused (bool): Start the visualizer paused.
         """
         self.setup()
+        
+        paused = start_paused
+        trajectory_index = 0
+        trajectory_length = len(joint_traj)
+        speedup = 1.
+        speedup_mutl = 1.2
+        
+        def my_key_callback(keycode):
+            nonlocal paused, trajectory_index, speedup
+            if keycode == 32: # spacebar
+                paused = not paused
+            elif paused:
+                if keycode == 262: # right arrow
+                    trajectory_index = min(trajectory_index + 1,
+                                           trajectory_length - 1)
+                if keycode == 263: # left arrow
+                    trajectory_index = max(trajectory_index - 1, 0)
+            elif keycode == 265: # up arrow 
+                speedup *= speedup_mutl
+                print("Speed x", round(speedup, 2))
+            elif keycode == 264: # down arrow 
+                speedup /= speedup_mutl
+                print("Speed x", round(speedup, 2))
+
 
         N = len(joint_traj)
         if time_traj is None:
@@ -458,41 +493,48 @@ class Simulator:
         if self.verbose: print(f"Visualizing trajectory...")
         self.use_viewer = True
         try:
-            with mujoco.viewer.launch_passive(self.mj_model, self.mj_data, show_left_ui=False, show_right_ui=False) as viewer:
+            with mujoco.viewer.launch_passive(
+                self.mj_model,
+                self.mj_data,
+                show_left_ui=False,
+                show_right_ui=False,
+                key_callback=my_key_callback) as viewer:
+                
                 while viewer.is_running():
                     self.mj_data.time = 0.
                     self.viewer_step = 0
                     viewer_time = 0.
                     # Iterate over state trajectory
-                    for qpos, dt in zip(joint_traj, dt_traj):
-                        if not viewer.is_running():
-                            break
 
-                        # Set the state
-                        self.mj_data.qpos[:] = qpos
-                        mujoco.mj_forward(self.mj_model, self.mj_data)
+                    # Set the state
+                    self.mj_data.qpos[:] = joint_traj[trajectory_index]
+                    mujoco.mj_forward(self.mj_model, self.mj_data)
 
-                        # Record video
-                        if record_video:
-                            self._update_camera_position(viewer)
-                            self._record_frame(renderer, viewer)
+                    # Record video
+                    if record_video:
+                        self._update_camera_position(viewer)
+                        self._record_frame(renderer, viewer)
 
-                        # Update the viewer
-                        render_time = 0.
-                        if viewer_time <= self.mj_data.time:
-                            render_time = self._viewer_step(viewer)
+                    # Update the viewer
+                    render_time = 0.
+                    if viewer_time <= self.mj_data.time:
+                        render_time = self._viewer_step(viewer)
 
-                        # Update time
-                        self.mj_data.time += dt
-                        viewer_time = self.viewer_step * self.viewer_dt
+                    # Update time
+                    dt = dt_traj[trajectory_index] / speedup
+                    self.mj_data.time += dt
+                    viewer_time = self.viewer_step * self.viewer_dt
 
-                        # Sleep to match the time trajectory
-                        sleep_time = max(dt - render_time, 0.)
-                        time.sleep(sleep_time)
+                    # Sleep to match the time trajectory
+                    sleep_time = max(dt - render_time, 0.)
+                    time.sleep(sleep_time)
 
                     # Sleep one second before starting again
-                    if viewer.is_running():
+                    if not paused:
+                        trajectory_index += 1
+                    if trajectory_index >= trajectory_length:
                         time.sleep(1)
+                        trajectory_index = 0
 
         except KeyboardInterrupt:
             if self.verbose: print("\nTrajectory visualization interrupted.")
