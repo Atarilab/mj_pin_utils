@@ -47,7 +47,7 @@ class VideoSettings:
         self.elevation = -90
 
     def set_front_view(self):
-        self.azimuth = 0
+        self.azimuth = 180
         self.elevation = 0
 
     def set_bottom_view(self):
@@ -492,7 +492,7 @@ class Simulator:
         if self.verbose:
             print(f"Visualizing trajectory...")
 
-        self.use_viewer = False if (record_video and use_viewer_cam) else True
+        self.use_viewer = False if (record_video and not use_viewer_cam) else True
         try:
             with mujoco.viewer.launch_passive(
                 self.mj_model,
