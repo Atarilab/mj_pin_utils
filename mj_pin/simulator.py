@@ -184,9 +184,9 @@ class Simulator:
         if self.mj_model.vis.global_.offheight < self.vs.height:
             self.mj_model.vis.global_.offheight = self.vs.height
 
-        self.rendering_cam = mujoco.MjvCamera()
         if self.vs is None: self.vs = VideoSettings()
-
+        self.rendering_cam = mujoco.MjvCamera()
+        
     def get_renderer(self):
         renderer = mujoco.Renderer(self.mj_model, self.vs.height, self.vs.width)
         return renderer
@@ -440,6 +440,7 @@ class Simulator:
         time_traj: Optional[np.ndarray] = None,
         record_video : bool = False,
         start_paused : bool = False,
+        use_viewer_cam : bool = True,
         ) -> None:
         """
         Visualize a joint trajectory using the MuJoCo viewer.
@@ -491,7 +492,7 @@ class Simulator:
         if self.verbose:
             print(f"Visualizing trajectory...")
 
-        self.use_viewer = True
+        self.use_viewer = False if (record_video and use_viewer_cam) else True
         try:
             with mujoco.viewer.launch_passive(
                 self.mj_model,
